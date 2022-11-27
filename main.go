@@ -2,76 +2,56 @@ package main
 
 import (
 	"fmt"
-	"golang.org/x/net/html"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 )
 
 func main() {
 	var (
 		webPageUrl string
-		links      []string
 	)
 	fmt.Println("Enter valid html webPageUrl:")
 	fmt.Fscan(os.Stdin, &webPageUrl)
-	resp, err := parseFromSite(webPageUrl)
+	resp := parseFromSite(webPageUrl)
+	compiled, err := regexp.Compile("<a.*?href=[\"\"'](?P<url>[^\"\"^']+[.]*?)[\"\"'].*?>(?P<keywords>[^<]+[.]*?)</a>")
 	if err != nil {
-		log.Fatalf("error fetching URL: %v\n", err)
+		log.Fatalf("%s", err)
 	}
-	links, err = getAllLinks(resp.Body, webPageUrl)
-	fmt.Println("Parsed Links:")
-	for _, val := range links {
-		fmt.Println(val)
+	data, _ := io.ReadAll(resp.Body)
+	all := compiled.FindAllStringSubmatch(string(data), -1)
+	fmt.Print("\n-------------------------------PARSED LINKS----------------------------------")
+	for _, slice1 := range all {
+		fmt.Printf("\n")
+		if !strings.HasPrefix(slice1[1], "/") {
+			urlPage, err := url.Parse(webPageUrl)
+			if err != nil {
+				log.Fatalf("Cant parse main page of webUrl")
+			}
+			finalUrl, err := urlPage.Parse(slice1[1])
+			fmt.Print(finalUrl)
+		} else {
+			fmt.Print(slice1[1])
+		}
 	}
+	fmt.Println("\n-----------------------------------------------------------------------------")
 }
-func parseFromSite(websiteUrl string) (*http.Response, error) {
-	resp, err := http.Get(websiteUrl)
+
+func parseFromSite(url string) *http.Response {
+	htmlDoc, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		log.Fatalf("Invalid URL: %s", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("response status code was %d\n", resp.StatusCode)
+	if htmlDoc.StatusCode != http.StatusOK {
+		log.Fatalf("Cant connect to site, err code: %s", err)
 	}
-	ctype := resp.Header.Get("Content-Type")
+	ctype := htmlDoc.Header.Get("Content-Type")
 	if !strings.HasPrefix(ctype, "text/html") {
 		log.Fatalf("response content type was %s not text/html\n", ctype)
 	}
-	return resp, err
-}
-
-func getAllLinks(body io.Reader, siteUrl string) ([]string, error) {
-	var links []string
-	tokenizer := html.NewTokenizer(body)
-	for {
-		tokenType := tokenizer.Next()
-		if tokenType == html.ErrorToken {
-			err := tokenizer.Err()
-			if err == io.EOF {
-				break
-			}
-			log.Fatalf("error tokenizing HTML: %v", tokenizer.Err())
-		}
-		if tokenType == html.StartTagToken {
-			token := tokenizer.Token()
-			if "a" == token.Data {
-				for _, attr := range token.Attr {
-					if attr.Key == "href" && strings.HasPrefix(attr.Val, "/") {
-						urlPage, err := url.Parse(siteUrl)
-						if err != nil {
-							return nil, err
-						}
-						finalUrl, err := urlPage.Parse(attr.Val)
-						links = append(links, finalUrl.String())
-					} else if attr.Key == "href" && !strings.HasPrefix(attr.Val, "#") {
-						links = append(links, attr.Val)
-					}
-				}
-			}
-		}
-	}
-	return links, nil
+	return htmlDoc
 }
